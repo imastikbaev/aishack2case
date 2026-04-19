@@ -1051,6 +1051,43 @@ def optimize_day(body: dict, db: Session = Depends(get_db)):
 @app.post("/api/telegram/webhook")
 async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
     data = await request.json()
+    callback_query = data.get("callback_query", {})
+    if callback_query:
+        message = callback_query.get("message", {})
+        chat = message.get("chat", {})
+        chat_id = str(chat.get("id", ""))
+        action = callback_query.get("data")
+
+        if action == "attendance":
+            summary = get_attendance_summary(db)
+            return {
+                "method": "sendMessage",
+                "chat_id": chat_id,
+                "parse_mode": "Markdown",
+                "text": (
+                    "📊 *Посещаемость на сегодня*\n\n"
+                    f"✅ Присутствует: *{summary.get('present', 0)}* учеников\n"
+                    f"❌ Отсутствует: *{summary.get('absent', 0)}* учеников\n"
+                    f"🍽 Порций в столовую: *{summary.get('meal_portions_needed', 0)}*\n\n"
+                    f"Отчиталось: {summary.get('reported_classes', 0)}/{summary.get('total_classes', 0)} классов "
+                    f"({summary.get('completion_pct', 0)}%)"
+                ),
+            }
+
+        if action == "tasks":
+            tasks = db.query(Task).filter(Task.status != "done").order_by(Task.due_date.asc()).limit(5).all()
+            if not tasks:
+                text = "✅ Активных задач нет."
+            else:
+                lines = ["📋 *Активные задачи*"]
+                for task in tasks:
+                    assignee = task.assignee.name if task.assignee else "Не назначен"
+                    lines.append(f"• {task.title} — {assignee} ({task.priority})")
+                text = "\n".join(lines)
+            return {"method": "sendMessage", "chat_id": chat_id, "parse_mode": "Markdown", "text": text}
+
+        return {"method": "sendMessage", "chat_id": chat_id, "text": "Неизвестное действие."}
+
     message_data = data.get("message", {})
     if not message_data:
         return {"ok": True}
@@ -1087,17 +1124,67 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
         }
 
     if text and sender_name:
-        parse_message({
+        result = parse_message({
             "message": text,
             "sender": sender_name,
             "telegram_id": telegram_id,
             "telegram_username": telegram_username,
         }, db)
+        parsed = result.get("parsed", {})
+        action = result.get("action_result", {})
+        parsed_type = parsed.get("type", "general")
+
+        if parsed_type == "attendance":
+            cls = parsed.get("class_name", "?")
+            present = parsed.get("present", 0)
+            absent = parsed.get("absent", 0)
+            if action and action.get("action") == "attendance_recorded":
+                return {
+                    "method": "sendMessage",
+                    "chat_id": telegram_id,
+                    "parse_mode": "Markdown",
+                    "text": (
+                        f"✅ *Посещаемость {cls} принята*\n"
+                        f"👥 Присутствует: {present} | ❌ Отсутствует: {absent}"
+                    ),
+                }
+            return {
+                "method": "sendMessage",
+                "chat_id": telegram_id,
+                "text": f"⚠️ Не удалось записать посещаемость {cls}. {action.get('error', '')}",
+            }
+
+        if parsed_type == "incident":
+            title = parsed.get("title") or text[:60]
+            location = parsed.get("location") or "Не указано"
+            if action and action.get("action") == "incident_created":
+                return {
+                    "method": "sendMessage",
+                    "chat_id": telegram_id,
+                    "parse_mode": "Markdown",
+                    "text": (
+                        "⚠️ *Инцидент зарегистрирован*\n"
+                        f"📍 Место: {location}\n"
+                        f"📋 Суть: {title}\n"
+                        "🔧 Ответственный уведомлён"
+                    ),
+                }
+            return {
+                "method": "sendMessage",
+                "chat_id": telegram_id,
+                "text": f"⚠️ Не удалось создать инцидент. {action.get('error', '')}",
+            }
 
     return {
         "method": "sendMessage",
         "chat_id": telegram_id,
         "text": "✅ Сообщение получено.",
+        "reply_markup": {
+            "inline_keyboard": [[
+                {"text": "📊 Посещаемость", "callback_data": "attendance"},
+                {"text": "📋 Задачи", "callback_data": "tasks"},
+            ]]
+        },
     }
 
 
