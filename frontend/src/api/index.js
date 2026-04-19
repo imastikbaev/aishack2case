@@ -15,6 +15,7 @@ export const schedule = {
   getHeatmap: () => api.get('/schedule/heatmap'),
   getConflicts: () => api.get('/schedule/conflicts'),
   getSummary: () => api.get('/schedule/summary'),
+  generate: (data = {}) => api.post('/schedule/generate', data),
   applySubstitution: (data) => api.post('/schedule/substitution', data),
 }
 

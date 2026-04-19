@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import {
-  AlertCircle, RefreshCw, UserX, Zap, Layers, Check, X,
+  AlertCircle, RefreshCw, UserX, Zap, Check, X,
   CheckCircle2, ArrowLeftRight, DoorOpen, Clock, GripVertical,
+  Sparkles, ShieldCheck, Cpu, CalendarCheck, Wand2,
 } from 'lucide-react'
 import { schedule as scheduleApi, staff as staffApi, ai } from '../api'
 
@@ -18,6 +19,14 @@ const CARD = {
 }
 
 const TH_STYLE = { color: 'var(--text-faint)', fontSize: '11px', fontWeight: 500 }
+
+const GENERATION_STEPS = [
+  { label: 'Анализ классов и учебной нагрузки', icon: Cpu },
+  { label: 'Подбор учителей по квалификации', icon: Sparkles },
+  { label: 'Распределение кабинетов и спецзалов', icon: DoorOpen },
+  { label: 'Проверка накладок по слотам', icon: ShieldCheck },
+  { label: 'Финальная сборка недельной сетки', icon: CalendarCheck },
+]
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function localDateString(date = new Date()) {
@@ -101,6 +110,86 @@ function ConflictBanner({ conflicts }) {
         ))}
         {conflicts.length > 3 && (
           <div className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>и ещё {conflicts.length - 3}...</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── GenerationPanel ──────────────────────────────────────────────────────────
+function GenerationPanel({ generating, step, result, onGenerate }) {
+  const currentStep = GENERATION_STEPS[Math.min(step, GENERATION_STEPS.length - 1)]
+  const CurrentIcon = currentStep.icon
+  const checks = result?.validation
+
+  return (
+    <div
+      className="schedule-generator-panel"
+      style={{
+        background: 'linear-gradient(135deg, rgba(73,63,162,0.98) 0%, rgba(35,45,143,0.98) 52%, rgba(35,93,92,0.96) 100%)',
+        border: '1px solid rgba(255,255,255,0.14)',
+        borderRadius: '32px',
+        boxShadow: 'var(--shadow-panel), var(--shadow-soft)',
+      }}
+    >
+      <div className="schedule-generator-copy">
+        <div className="generator-eyebrow">
+          <Sparkles size={13} /> AI генератор расписания
+        </div>
+        <h3>Собрать логичное расписание без накладок</h3>
+        <p>
+          Генератор учитывает занятость учителей, кабинеты, профильные предметы, дневную нагрузку классов и после сборки запускает автоматическую проверку конфликтов.
+        </p>
+
+        {result && !generating && (
+          <div className="generator-result-grid">
+            <div><strong>{result.created}</strong><span>уроков</span></div>
+            <div><strong>{result.teachers_used}</strong><span>учителей</span></div>
+            <div><strong>{result.rooms_used}</strong><span>кабинетов</span></div>
+            <div><strong>{result.conflicts?.length || 0}</strong><span>накладок</span></div>
+          </div>
+        )}
+      </div>
+
+      <div className="schedule-generator-action">
+        <div className={`generation-orbit ${generating ? 'is-active' : ''}`}>
+          <div className="generation-orbit-ring" />
+          <div className="generation-orbit-core">
+            {generating ? <CurrentIcon size={28} /> : result?.ok ? <CheckCircle2 size={30} /> : <Wand2 size={30} />}
+          </div>
+          {GENERATION_STEPS.map((item, i) => {
+            const Icon = item.icon
+            return (
+              <span
+                key={item.label}
+                className={`generation-node node-${i + 1} ${i <= step && generating ? 'is-lit' : ''} ${result && !generating ? 'is-done' : ''}`}
+              >
+                <Icon size={12} />
+              </span>
+            )
+          })}
+        </div>
+
+        <div className="generator-status">
+          {generating ? currentStep.label : result?.ok ? 'Расписание собрано и проверено' : 'Готов к генерации'}
+        </div>
+
+        <button onClick={onGenerate} disabled={generating} className="btn-primary justify-center">
+          {generating ? <RefreshCw size={15} className="animate-spin" /> : <Sparkles size={15} />}
+          {generating ? 'Генерирую...' : 'Сгенерировать расписание'}
+        </button>
+
+        {checks && !generating && (
+          <div className="generator-checks">
+            <span className={checks.conflicts_ok ? 'ok' : 'bad'}>
+              {checks.conflicts_ok ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+              Накладки: {checks.hard_conflicts}
+            </span>
+            <span className={checks.coverage_ok ? 'ok' : 'warn'}>
+              {checks.coverage_ok ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+              Покрытие: {checks.warnings_count}
+            </span>
+          </div>
         )}
       </div>
     </div>
@@ -239,6 +328,9 @@ export default function Schedule() {
   const [simLoading, setSimLoading]       = useState(false)
   const [applyLoading, setApplyLoading]   = useState(false)
   const [dragConflict, setDragConflict]   = useState(false)
+  const [generating, setGenerating]       = useState(false)
+  const [generationStep, setGenerationStep] = useState(0)
+  const [generationResult, setGenerationResult] = useState(null)
   const [selectedDay, setSelectedDay]     = useState(
     new Date().getDay() === 0 || new Date().getDay() === 6 ? 0 : new Date().getDay() - 1
   )
@@ -292,6 +384,38 @@ export default function Schedule() {
       loadAll()
       alert(`Замена оформлена. ${substitution.substitute_name} получит уведомление.`)
     } finally { setApplyLoading(false) }
+  }
+
+  async function handleGenerateSchedule() {
+    setGenerating(true)
+    setGenerationResult(null)
+    setGenerationStep(0)
+    const started = Date.now()
+    const timer = setInterval(() => {
+      setGenerationStep(prev => Math.min(prev + 1, GENERATION_STEPS.length - 1))
+    }, 700)
+
+    try {
+      const res = await scheduleApi.generate({ strategy: 'balanced' })
+      const elapsed = Date.now() - started
+      if (elapsed < 3600) {
+        await new Promise(resolve => setTimeout(resolve, 3600 - elapsed))
+      }
+      clearInterval(timer)
+      setGenerationStep(GENERATION_STEPS.length - 1)
+      setGenerationResult(res.data)
+      await loadAll()
+      setView('week')
+      setSelectedDay(0)
+      if (res.data.conflicts?.length) {
+        alert(`Расписание создано, но найдено ${res.data.conflicts.length} накладок. Проверьте блок конфликтов.`)
+      }
+    } catch (err) {
+      clearInterval(timer)
+      alert('Не удалось сгенерировать расписание. Проверьте backend и попробуйте ещё раз.')
+    } finally {
+      setTimeout(() => setGenerating(false), 450)
+    }
   }
 
   // Drag-and-drop handlers (visual-only — бэкенд endpoint не реализован)
@@ -348,9 +472,16 @@ export default function Schedule() {
       <div className="page-toolbar">
         <div className="page-intro">
           <h2>Расписание</h2>
-          <p>Недельная сетка, тепловая карта нагрузки, матрица помещений и замещения.</p>
+          <p>AI-генерация, недельная сетка, тепловая карта нагрузки, матрица помещений и замещения.</p>
         </div>
       </div>
+
+      <GenerationPanel
+        generating={generating}
+        step={generationStep}
+        result={generationResult}
+        onGenerate={handleGenerateSchedule}
+      />
 
       {/* ── Conflict banner ── */}
       <ConflictBanner conflicts={conflicts} />

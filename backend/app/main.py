@@ -142,6 +142,14 @@ def get_conflicts(db: Session = Depends(get_db)):
     return schedule_service.check_conflicts(db)
 
 
+@app.post("/api/schedule/generate")
+def generate_schedule(body: Optional[dict] = None, db: Session = Depends(get_db)):
+    body = body or {}
+    strategy = body.get("strategy", "balanced")
+    result = schedule_service.generate_school_schedule(db, strategy=strategy)
+    return result
+
+
 @app.post("/api/schedule/substitution")
 def apply_substitution(body: dict, db: Session = Depends(get_db)):
     absent_id = body.get("absent_teacher_id")
