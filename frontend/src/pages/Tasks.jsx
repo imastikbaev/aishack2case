@@ -3,7 +3,7 @@ import {
   Mic, MicOff, Plus, RefreshCw, CheckCircle, Circle, Clock,
   Trash2, Zap, AlertCircle, Radio, Bot, SendHorizontal,
   CheckCircle2, ArrowRight, BookOpen, ShieldCheck,
-  MessageCircle, Copy, CheckCheck,
+  MessageCircle, Copy, CheckCheck, Keyboard,
 } from 'lucide-react'
 import { tasks as tasksApi, staff as staffApi, ai } from '../api'
 
@@ -182,6 +182,7 @@ export default function Tasks() {
   const [voiceLoading, setVoiceLoading] = useState(false)
   const [voiceResult, setVoiceResult]   = useState(null)
   const [deliveryMode, setDeliveryMode] = useState('tasks')
+  const [voiceNotice, setVoiceNotice]   = useState('')
   const [whatsappCopied, setWhatsappCopied] = useState(false)
   const [showNewTask, setShowNewTask]   = useState(false)
   const [newTask, setNewTask] = useState({ title: '', assignee_id: '', priority: 'medium', due_date: '', description: '' })
@@ -237,15 +238,25 @@ export default function Tasks() {
 
   function startRecording() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) { alert('Голосовой ввод не поддерживается. Попробуйте Chrome.'); return }
+    if (!SR) {
+      setVoiceNotice('Браузер не поддерживает распознавание речи. Вставьте поручение вручную или нажмите пример ниже.')
+      return
+    }
     const rec = new SR()
     rec.lang = 'ru-RU'
-    rec.continuous = true
+    rec.continuous = false
     rec.interimResults = true
-    rec.onresult = e => setTranscript(Array.from(e.results).map(r => r[0].transcript).join(' '))
-    rec.onerror  = () => {
+    rec.onresult = e => {
+      const text = Array.from(e.results).map(r => r[0].transcript).join(' ')
+      setTranscript(text)
+      setVoiceNotice('')
+    }
+    rec.onerror  = (event) => {
       setRecording(false)
-      alert('Не удалось распознать голос. Можно вставить текст поручения вручную в поле ниже.')
+      const reason = event?.error === 'not-allowed'
+        ? 'Микрофон недоступен. Разрешите доступ в браузере или вставьте поручение вручную.'
+        : 'Не удалось распознать голос. Вставьте поручение вручную в поле ниже или нажмите демо-пример.'
+      setVoiceNotice(reason)
     }
     rec.onend    = () => setRecording(false)
     rec.start()
@@ -253,6 +264,7 @@ export default function Tasks() {
     setRecording(true)
     setTranscript('')
     setVoiceResult(null)
+    setVoiceNotice('')
   }
 
   function stopRecording() {
@@ -351,14 +363,12 @@ export default function Tasks() {
               >
                 {recording ? <><MicOff size={15} /> Стоп</> : <><Mic size={15} /> Записать</>}
               </button>
-              {transcript && !recording && (
-                <button onClick={handleParseVoice} disabled={voiceLoading} className="btn-primary">
-                  {voiceLoading
-                    ? <RefreshCw size={15} className="animate-spin" />
-                    : deliveryMode === 'whatsapp' ? <MessageCircle size={15} /> : <Zap size={15} />}
-                  {voiceLoading ? 'Обрабатываю...' : deliveryMode === 'whatsapp' ? 'Создать и подготовить WhatsApp' : 'Создать задачи'}
-                </button>
-              )}
+              <button onClick={handleParseVoice} disabled={voiceLoading || recording || !transcript.trim()} className="btn-primary">
+                {voiceLoading
+                  ? <RefreshCw size={15} className="animate-spin" />
+                  : deliveryMode === 'whatsapp' ? <MessageCircle size={15} /> : <Zap size={15} />}
+                {voiceLoading ? 'Обрабатываю...' : deliveryMode === 'whatsapp' ? 'Создать и подготовить WhatsApp' : 'Создать задачи'}
+              </button>
             </div>
 
             {recording && (
@@ -376,18 +386,26 @@ export default function Tasks() {
               </div>
             )}
 
-            {transcript && (
-              <div className="mt-3 rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                <div className="text-xs mb-1" style={{ color: 'rgba(255,255,255,0.4)' }}>Распознанный текст:</div>
-                <textarea
-                  value={transcript}
-                  onChange={e => setTranscript(e.target.value)}
-                  className="text-sm w-full resize-none bg-transparent outline-none"
-                  style={{ color: 'rgba(255,255,255,0.85)' }}
-                  rows={2}
-                />
+            {voiceNotice && (
+              <div className="mt-3 rounded-2xl p-3 flex items-start gap-2" style={{ background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.28)', color: '#fde68a' }}>
+                <Keyboard size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                <span className="text-xs leading-relaxed">{voiceNotice}</span>
               </div>
             )}
+
+            <div className="mt-3 rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
+              <div className="text-xs mb-1 flex items-center gap-1.5" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                <Keyboard size={12} /> Текст поручения
+              </div>
+              <textarea
+                value={transcript}
+                onChange={e => { setTranscript(e.target.value); setVoiceResult(null); setVoiceNotice('') }}
+                className="text-sm w-full resize-none bg-transparent outline-none"
+                placeholder="Например: Назкен, подготовь списки учеников сегодня. Айгерим, проверь актовый зал и проектор."
+                style={{ color: 'rgba(255,255,255,0.85)' }}
+                rows={3}
+              />
+            </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
               {[
