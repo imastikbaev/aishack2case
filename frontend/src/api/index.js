@@ -1,6 +1,11 @@
 import axios from 'axios'
 
-const api = axios.create({ baseURL: '/api' })
+const API_ORIGIN = import.meta.env.VITE_API_URL?.replace(/\/$/, '')
+  || (import.meta.env.PROD ? 'https://aishack2case.onrender.com' : '')
+
+const BASE_URL = API_ORIGIN ? `${API_ORIGIN}/api` : '/api'
+
+const api = axios.create({ baseURL: BASE_URL })
 
 export const staff = {
   getAll: () => api.get('/staff'),

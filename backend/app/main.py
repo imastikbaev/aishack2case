@@ -4,32 +4,97 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, date, timedelta
 from typing import Optional, List
-import os, json
+import os, json, logging
 from urllib.parse import quote
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from .database import engine, get_db
+from .database import engine, get_db, SessionLocal
 from . import models
 from .models import Staff, ClassGroup, Room, Schedule, Task, Attendance, Incident, ChatMessage, Notification, AttendancePrediction
 from .services import ai_service, schedule_service
 
 models.Base.metadata.create_all(bind=engine)
 
+log = logging.getLogger(__name__)
+
 app = FastAPI(title="AI-Завуч API", version="1.0.0")
+
+# ─── APScheduler: auto canteen send at 09:00 ─────────────────────────────────
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+
+    _canteen_last_sent: dict = {"date": None, "portions": 0, "status": "not_sent"}
+
+    def _auto_send_canteen():
+        """Runs every day at 09:00 — collects attendance & notifies canteen."""
+        db = SessionLocal()
+        try:
+            today = date.today().isoformat()
+            records = db.query(Attendance).filter(Attendance.date == today).all()
+            portions = sum(r.meal_portions or r.present for r in records)
+            classes = db.query(ClassGroup).all()
+            reported = len({r.class_group_id for r in records})
+
+            msg = (
+                f"🍽 АВТОМАТИЧЕСКАЯ заявка в столовую\n"
+                f"📅 {today}\n"
+                f"✅ Отчитались: {reported}/{len(classes)} классов\n"
+                f"👥 Всего порций: {portions}"
+            )
+
+            # Notify director (id=1) and any canteen staff
+            db.add(Notification(
+                staff_id=1,
+                message=msg,
+                notification_type="daily_summary",
+            ))
+            db.commit()
+
+            _canteen_last_sent["date"] = today
+            _canteen_last_sent["portions"] = portions
+            _canteen_last_sent["status"] = "sent"
+            _canteen_last_sent["time"] = "09:00"
+            _canteen_last_sent["reported_classes"] = reported
+            _canteen_last_sent["total_classes"] = len(classes)
+            log.info(f"[AutoCanteen] Sent: {portions} portions for {today}")
+        except Exception as e:
+            log.error(f"[AutoCanteen] Error: {e}")
+            _canteen_last_sent["status"] = "error"
+        finally:
+            db.close()
+
+    _scheduler = BackgroundScheduler(timezone="Asia/Almaty")
+    _scheduler.add_job(
+        _auto_send_canteen,
+        CronTrigger(hour=9, minute=0),
+        id="canteen_auto_send",
+        replace_existing=True,
+    )
+    _scheduler.start()
+    log.info("[APScheduler] Canteen auto-send scheduled at 09:00 Asia/Almaty")
+
+except ImportError:
+    log.warning("[APScheduler] apscheduler not installed — canteen auto-send disabled")
+    _canteen_last_sent = {"date": None, "portions": 0, "status": "not_configured"}
+    _scheduler = None
 
 
 def _allowed_origins() -> list[str]:
-    raw = os.getenv("ALLOWED_ORIGINS") or os.getenv("FRONTEND_URL", "http://localhost:5173")
+    raw = os.getenv("ALLOWED_ORIGINS") or os.getenv("FRONTEND_URL", "*")
     origins = [o.strip() for o in raw.split(",") if o.strip()]
-    return origins or ["http://localhost:5173"]
+    return origins or ["*"]
+
+
+_cors_origins = _allowed_origins()
 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins(),
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -106,7 +171,18 @@ def get_staff(staff_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/staff/{staff_id}/schedule")
 def get_staff_schedule(staff_id: int, db: Session = Depends(get_db)):
-    return schedule_service.get_teacher_schedule(db, staff_id)
+    """Full weekly schedule for any staff member (teachers + admin)."""
+    return schedule_service.get_staff_full_schedule(db, staff_id)
+
+
+@app.patch("/api/staff/{staff_id}/constraints")
+def update_constraints(staff_id: int, body: dict, db: Session = Depends(get_db)):
+    s = db.query(Staff).filter(Staff.id == staff_id).first()
+    if not s:
+        raise HTTPException(404)
+    s.constraints = body.get("constraints", s.constraints or {})
+    db.commit()
+    return staff_to_dict(s)
 
 
 @app.patch("/api/staff/{staff_id}/availability")
@@ -382,17 +458,40 @@ def send_canteen_request(body: dict, db: Session = Depends(get_db)):
     staff_id = body.get("staff_id", 1)
     today = date.today().isoformat()
     records = db.query(Attendance).filter(Attendance.date == today).all()
+    classes = db.query(ClassGroup).all()
     portions = sum(r.meal_portions or r.present for r in records)
+    reported = len({r.class_group_id for r in records})
 
     notif = Notification(
         staff_id=staff_id,
-        message=f"🍽 Заявка в столовую отправлена: {portions} порций на {today}.",
+        message=(
+            f"🍽 Заявка в столовую отправлена вручную\n"
+            f"📅 {today}\n"
+            f"✅ Классов отчиталось: {reported}/{len(classes)}\n"
+            f"👥 Всего порций: {portions}"
+        ),
         notification_type="daily_summary",
     )
     db.add(notif)
     db.commit()
     db.refresh(notif)
-    return {"ok": True, "date": today, "portions": portions, "notification_id": notif.id}
+
+    # Update auto-send status
+    _canteen_last_sent["date"] = today
+    _canteen_last_sent["portions"] = portions
+    _canteen_last_sent["status"] = "sent_manual"
+
+    return {
+        "ok": True, "date": today, "portions": portions,
+        "reported_classes": reported, "total_classes": len(classes),
+        "notification_id": notif.id,
+    }
+
+
+@app.get("/api/attendance/canteen-status")
+def canteen_status():
+    """Returns the last canteen send status (auto or manual)."""
+    return _canteen_last_sent
 
 
 # ─── Incidents ───────────────────────────────────────────────────────────────
@@ -534,7 +633,7 @@ def ai_voice_to_task(body: dict, db: Session = Depends(get_db)):
     """Convert director's voice/text command to structured tasks."""
     transcript = body.get("transcript", "")
     send_whatsapp = bool(body.get("send_whatsapp", False))
-    director_name = body.get("director_name", "Гульбара Сейтова")
+    director_name = body.get("director_name", "Директор")
     whatsapp_group_name = body.get("whatsapp_group_name", "WhatsApp-группа школы")
     if not transcript:
         raise HTTPException(400, "transcript обязателен")
@@ -610,6 +709,14 @@ def ai_voice_to_task(body: dict, db: Session = Depends(get_db)):
         }
 
     return {"tasks_created": len(created_tasks), "tasks": created_tasks, "whatsapp": whatsapp}
+
+
+@app.get("/api/schedule/substitutes")
+def get_substitutes(absent_teacher_id: int, target_date: Optional[str] = None, db: Session = Depends(get_db)):
+    """Return ranked list of possible substitutes for given teacher."""
+    td = date.fromisoformat(target_date) if target_date else date.today()
+    candidates = schedule_service.find_substitutes(db, absent_teacher_id, td)
+    return {"candidates": candidates, "date": td.isoformat()}
 
 
 @app.post("/api/ai/find-substitution")
