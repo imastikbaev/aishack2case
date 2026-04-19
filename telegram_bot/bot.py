@@ -179,6 +179,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "message": text,
         "sender": sender_name,
         "telegram_id": str(user.id),
+        "telegram_username": user.username,
     })
 
     if not result:
@@ -279,11 +280,13 @@ async def poll_notifications(app: Application):
             if data and data.get("notifications"):
                 for notif in data["notifications"]:
                     username = notif.get("username")
+                    telegram_id = notif.get("telegram_id")
                     message = notif.get("message")
-                    if username and message:
-                        # In a real deployment we'd look up the chat_id from username
-                        # For demo: log the notification
-                        log.info(f"[NOTIF] @{username}: {message}")
+                    if telegram_id and message:
+                        await app.bot.send_message(chat_id=telegram_id, text=message)
+                        log.info(f"[NOTIF] sent to {telegram_id}: {message}")
+                    elif username and message:
+                        log.info(f"[NOTIF] @{username} has no chat_id yet: {message}")
         except Exception as e:
             log.debug(f"Notification poll error: {e}")
         await asyncio.sleep(15)

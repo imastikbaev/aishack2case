@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { RefreshCw, Shield, Clock, Dot, ArrowRight, Bell, UserCheck, UserX, ChevronDown } from 'lucide-react'
 import { staff as staffApi, ai } from '../api'
+import { useAppShell } from '../context/AppShellContext'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const ROLE_LABELS = {
@@ -250,6 +251,7 @@ function StaffCard({ s, risk, onToggleAvailability, onSendNotification }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function StaffPage() {
+  const { t } = useAppShell()
   const [staffList, setStaffList] = useState([])
   const [risks, setRisks]         = useState([])
   const [loading, setLoading]     = useState(true)
@@ -274,8 +276,18 @@ export default function StaffPage() {
   async function handleSendNotification(person) {
     const message = prompt(`Сообщение для ${person.name} (@${person.telegram_username}):`)
     if (!message?.trim()) return
-    // В реальной системе здесь вызывается backend endpoint для отправки в Telegram
-    alert(`✅ Уведомление отправлено ${person.name} в Telegram.\n\n"${message}"`)
+    const res = await staffApi.notify(person.id, message.trim())
+    const tg = res.data?.telegram || {}
+    if (tg.direct_sent) {
+      alert(`✅ Уведомление отправлено ${person.name} в Telegram.\n\n"${message.trim()}"`)
+    } else if (tg.needs_start) {
+      alert(
+        `✅ Уведомление сохранено для ${person.name}, но Telegram не может написать первым.\n\n` +
+        `Попроси @${person.telegram_username} один раз открыть школьного бота и нажать /start.`
+      )
+    } else {
+      alert(`✅ Уведомление поставлено в очередь для ${person.name}.\n\n"${message.trim()}"`)
+    }
   }
 
   const roles    = ['all', 'teacher', 'vice_principal', 'director', 'secretary', 'maintenance_chief', 'technician']
@@ -291,7 +303,7 @@ export default function StaffPage() {
 
       {/* ── Toolbar ── */}
       <div className="page-intro">
-        <h2>Сотрудники</h2>
+        <h2>{t('pages.staff.title')}</h2>
         <p>Нагрузка, риск-алерты, уведомления через Telegram и управление доступностью.</p>
       </div>
 

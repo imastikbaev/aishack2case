@@ -12,6 +12,7 @@ export const staff = {
   getById: (id) => api.get(`/staff/${id}`),
   getSchedule: (id) => api.get(`/staff/${id}/schedule`),
   updateAvailability: (id, is_available) => api.patch(`/staff/${id}/availability`, { is_available }),
+  notify: (id, message) => api.post(`/staff/${id}/notify`, { message }),
 }
 
 export const schedule = {

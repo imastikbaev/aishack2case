@@ -257,6 +257,34 @@ def update_availability(staff_id: int, body: dict, db: Session = Depends(get_db)
     return {"ok": True}
 
 
+@app.post("/api/staff/{staff_id}/notify")
+def notify_staff(staff_id: int, body: dict, db: Session = Depends(get_db)):
+    s = db.query(Staff).filter(Staff.id == staff_id).first()
+    if not s:
+        raise HTTPException(404, "Сотрудник не найден")
+
+    message = (body.get("message") or "").strip()
+    if not message:
+        raise HTTPException(400, "message обязателен")
+
+    notif = Notification(
+        staff_id=s.id,
+        message=message,
+        notification_type="task",
+    )
+    db.add(notif)
+    db.commit()
+    db.refresh(notif)
+
+    telegram = _send_telegram_notification(s.telegram_username, message, s.telegram_id)
+    return {
+        "ok": True,
+        "notification_id": notif.id,
+        "staff": staff_to_dict(s),
+        "telegram": telegram,
+    }
+
+
 # ─── Schedule ────────────────────────────────────────────────────────────────
 
 @app.get("/api/schedule/today")
@@ -635,6 +663,18 @@ def parse_message(body: dict, db: Session = Depends(get_db)):
     message = body.get("message", "")
     sender = body.get("sender", "Учитель")
     telegram_id = body.get("telegram_id")
+    telegram_username = (body.get("telegram_username") or "").lstrip("@")
+
+    if telegram_id:
+        staff_q = db.query(Staff)
+        staff = None
+        if telegram_username:
+            staff = staff_q.filter(Staff.telegram_username == telegram_username).first()
+        if staff is None and sender:
+            staff = staff_q.filter(Staff.name == sender).first()
+        if staff:
+            staff.telegram_id = str(telegram_id)
+            db.commit()
 
     all_staff = [staff_to_dict(s) for s in db.query(Staff).all()]
     parsed = ai_service.parse_chat_message(message, sender, all_staff)
@@ -996,12 +1036,14 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
     from_user = message_data.get("from", {})
     sender_name = f"{from_user.get('first_name', '')} {from_user.get('last_name', '')}".strip()
     telegram_id = str(from_user.get("id", ""))
+    telegram_username = from_user.get("username", "")
 
     if text and sender_name:
         parse_message({
             "message": text,
             "sender": sender_name,
             "telegram_id": telegram_id,
+            "telegram_username": telegram_username,
         }, db)
 
     return {"ok": True}
@@ -1012,10 +1054,34 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
 _telegram_queue: list = []
 
 
-def _send_telegram_notification(username: Optional[str], message: str):
-    """Queue a Telegram message. The bot polls this endpoint."""
-    if username:
-        _telegram_queue.append({"username": username, "message": message})
+def _send_telegram_notification(username: Optional[str], message: str, telegram_id: Optional[str] = None) -> dict:
+    """Send directly when chat_id is known, otherwise queue for the bot."""
+    result = {"queued": False, "direct_sent": False, "needs_start": False}
+
+    if username or telegram_id:
+        _telegram_queue.append({"username": username, "telegram_id": telegram_id, "message": message})
+        result["queued"] = True
+
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    if token and telegram_id:
+        try:
+            import httpx
+            response = httpx.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": telegram_id, "text": message},
+                timeout=8,
+            )
+            result["direct_sent"] = response.status_code == 200
+            if not result["direct_sent"]:
+                result["telegram_error"] = response.text[:300]
+        except Exception as e:
+            result["telegram_error"] = str(e)
+
+    if not telegram_id:
+        result["needs_start"] = True
+        result["hint"] = "Пользователь должен один раз написать боту /start, чтобы бот получил chat_id."
+
+    return result
 
 
 @app.get("/api/telegram/pending-notifications")
