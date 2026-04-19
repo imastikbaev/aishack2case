@@ -21,6 +21,24 @@ log = logging.getLogger(__name__)
 
 app = FastAPI(title="AI-Завуч API", version="1.0.0")
 
+
+def _seed_database_if_empty() -> None:
+    db = SessionLocal()
+    try:
+        if db.query(Staff.id).first():
+            return
+    finally:
+        db.close()
+
+    log.info("[Seed] Empty database detected, loading demo data")
+    from .seed_data import seed
+    seed()
+
+
+@app.on_event("startup")
+def startup_seed_database():
+    _seed_database_if_empty()
+
 # ─── APScheduler: auto canteen send at 09:00 ─────────────────────────────────
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
