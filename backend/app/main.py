@@ -62,10 +62,33 @@ def _ensure_required_staff() -> None:
         db.close()
 
 
+def _configure_telegram_webhook() -> None:
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        return
+
+    public_url = os.getenv("BACKEND_PUBLIC_URL", "https://aishack2case.onrender.com").rstrip("/")
+    webhook_url = f"{public_url}/api/telegram/webhook"
+    try:
+        import httpx
+        response = httpx.post(
+            f"https://api.telegram.org/bot{token}/setWebhook",
+            json={"url": webhook_url},
+            timeout=8,
+        )
+        if response.status_code == 200:
+            log.info("[Telegram] Webhook configured: %s", webhook_url)
+        else:
+            log.warning("[Telegram] Webhook setup failed: %s", response.text[:300])
+    except Exception as e:
+        log.warning("[Telegram] Webhook setup error: %s", e)
+
+
 @app.on_event("startup")
 def startup_seed_database():
     _seed_database_if_empty()
     _ensure_required_staff()
+    _configure_telegram_webhook()
 
 
 @app.post("/api/admin/seed-demo")
@@ -1058,10 +1081,6 @@ def _send_telegram_notification(username: Optional[str], message: str, telegram_
     """Send directly when chat_id is known, otherwise queue for the bot."""
     result = {"queued": False, "direct_sent": False, "needs_start": False}
 
-    if username or telegram_id:
-        _telegram_queue.append({"username": username, "telegram_id": telegram_id, "message": message})
-        result["queued"] = True
-
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     if token and telegram_id:
         try:
@@ -1077,11 +1096,28 @@ def _send_telegram_notification(username: Optional[str], message: str, telegram_
         except Exception as e:
             result["telegram_error"] = str(e)
 
+    if not result["direct_sent"] and (username or telegram_id):
+        _telegram_queue.append({"username": username, "telegram_id": telegram_id, "message": message})
+        result["queued"] = True
+
     if not telegram_id:
         result["needs_start"] = True
         result["hint"] = "Пользователь должен один раз написать боту /start, чтобы бот получил chat_id."
 
     return result
+
+
+@app.get("/api/telegram/status")
+def telegram_status(db: Session = Depends(get_db)):
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    amina = db.query(Staff).filter(Staff.telegram_username == "amorik_0").first()
+    return {
+        "bot_token_configured": bool(token),
+        "webhook_url": f"{os.getenv('BACKEND_PUBLIC_URL', 'https://aishack2case.onrender.com').rstrip('/')}/api/telegram/webhook" if token else None,
+        "amina_exists": bool(amina),
+        "amina_has_telegram_id": bool(amina and amina.telegram_id),
+        "pending_queue_count": len(_telegram_queue),
+    }
 
 
 @app.get("/api/telegram/pending-notifications")
