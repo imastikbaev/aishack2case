@@ -1061,6 +1061,31 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
     telegram_id = str(from_user.get("id", ""))
     telegram_username = from_user.get("username", "")
 
+    if telegram_id:
+        staff_q = db.query(Staff)
+        staff = None
+        if telegram_username:
+            staff = staff_q.filter(Staff.telegram_username == telegram_username).first()
+        if staff is None and sender_name:
+            staff = staff_q.filter(Staff.name == sender_name).first()
+        if staff:
+            staff.telegram_id = telegram_id
+            db.commit()
+
+    if text.startswith("/start"):
+        if telegram_username == "amorik_0":
+            _ensure_required_staff()
+            staff = db.query(Staff).filter(Staff.telegram_username == "amorik_0").first()
+            if staff:
+                staff.telegram_id = telegram_id
+                db.commit()
+
+        return {
+            "method": "sendMessage",
+            "chat_id": telegram_id,
+            "text": "✅ Бот подключен. Теперь уведомления с сайта будут приходить сюда.",
+        }
+
     if text and sender_name:
         parse_message({
             "message": text,
@@ -1069,7 +1094,11 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
             "telegram_username": telegram_username,
         }, db)
 
-    return {"ok": True}
+    return {
+        "method": "sendMessage",
+        "chat_id": telegram_id,
+        "text": "✅ Сообщение получено.",
+    }
 
 
 # ─── Telegram notification helper ────────────────────────────────────────────
@@ -1110,13 +1139,15 @@ def _send_telegram_notification(username: Optional[str], message: str, telegram_
 @app.get("/api/telegram/status")
 def telegram_status(db: Session = Depends(get_db)):
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    public_url = os.getenv("BACKEND_PUBLIC_URL", "https://aishack2case.onrender.com").rstrip("/")
     amina = db.query(Staff).filter(Staff.telegram_username == "amorik_0").first()
     return {
         "bot_token_configured": bool(token),
-        "webhook_url": f"{os.getenv('BACKEND_PUBLIC_URL', 'https://aishack2case.onrender.com').rstrip('/')}/api/telegram/webhook" if token else None,
+        "webhook_url": f"{public_url}/api/telegram/webhook" if token else None,
         "amina_exists": bool(amina),
         "amina_has_telegram_id": bool(amina and amina.telegram_id),
         "pending_queue_count": len(_telegram_queue),
+        "next_step": None if token else "Set TELEGRAM_BOT_TOKEN in the Render backend service environment and redeploy.",
     }
 
 
