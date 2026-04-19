@@ -39,6 +39,21 @@ def _seed_database_if_empty() -> None:
 def startup_seed_database():
     _seed_database_if_empty()
 
+
+@app.post("/api/admin/seed-demo")
+def seed_demo_data():
+    _seed_database_if_empty()
+    db = SessionLocal()
+    try:
+        return {
+            "ok": True,
+            "staff_count": db.query(Staff).count(),
+            "class_count": db.query(ClassGroup).count(),
+            "schedule_count": db.query(Schedule).count(),
+        }
+    finally:
+        db.close()
+
 # ─── APScheduler: auto canteen send at 09:00 ─────────────────────────────────
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
