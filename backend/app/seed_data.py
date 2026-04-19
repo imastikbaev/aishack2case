@@ -16,7 +16,7 @@ from app.models import (
 models.Base.metadata.create_all(bind=engine)
 
 STAFF = [
-    dict(id=1,  name="Гульнара Сейтова",    role="director",          subjects=[],                           max_hours_per_week=0,  telegram_username="gulnara_s",   is_available=True,  risk_score=0.05),
+    dict(id=1,  name="Директор",             role="director",          subjects=[],                           max_hours_per_week=0,  telegram_username="gulnara_s",   is_available=True,  risk_score=0.05),
     dict(id=2,  name="Назкен Ахметова",      role="vice_principal",    subjects=["administration"],           max_hours_per_week=8,  telegram_username="nazken_a",    is_available=True,  risk_score=0.10),
     dict(id=3,  name="Аскар Бекенов",        role="teacher",           subjects=["mathematics"],              max_hours_per_week=22, telegram_username="askar_b",     is_available=True,  risk_score=0.72, absence_count=3, current_hours_week=27),
     dict(id=4,  name="Бахытжан Қасымов",     role="teacher",           subjects=["mathematics","logic"],      max_hours_per_week=20, telegram_username="bakhyt_k",    is_available=True,  risk_score=0.25),
@@ -36,6 +36,7 @@ STAFF = [
     dict(id=18, name="Медина Алиева",        role="secretary",         subjects=[],                           max_hours_per_week=0,  telegram_username="medina_a",    is_available=True,  risk_score=0.05),
     dict(id=19, name="Самат Дюсенов",        role="maintenance_chief", subjects=[],                           max_hours_per_week=0,  telegram_username="samat_d",     is_available=True,  risk_score=0.08),
     dict(id=20, name="Берик Сатыбалдиев",    role="technician",        subjects=[],                           max_hours_per_week=0,  telegram_username="berik_sat",   is_available=True,  risk_score=0.12),
+    dict(id=21, name="Амина Адилкызы",       role="teacher",           subjects=["english"],                  max_hours_per_week=20, telegram_username="amorik_0",   is_available=True,  risk_score=0.10),
 ]
 
 ROOMS = [
