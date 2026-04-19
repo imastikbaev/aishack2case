@@ -1,0 +1,25 @@
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Environment and runtime data
+.env
+backend/.env
+backend/*.db*
+*.db
+*.db-*
+*.db.*
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/vite.config.js.timestamp-*.mjs
+
+# Local IDE/agent settings
+.claude/
+
+# Logs
+*.log
