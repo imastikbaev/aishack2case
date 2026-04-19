@@ -35,14 +35,43 @@ def _seed_database_if_empty() -> None:
     seed()
 
 
+def _ensure_required_staff() -> None:
+    db = SessionLocal()
+    try:
+        staff = db.query(Staff).filter(Staff.telegram_username == "amorik_0").first()
+        if staff is None:
+            staff = Staff(
+                id=21,
+                name="Амина Адилкызы",
+                role="teacher",
+                subjects=["english"],
+                max_hours_per_week=20,
+                telegram_username="amorik_0",
+                is_available=True,
+                risk_score=0.10,
+            )
+            db.add(staff)
+        else:
+            staff.name = "Амина Адилкызы"
+            staff.role = staff.role or "teacher"
+            staff.subjects = staff.subjects or ["english"]
+            staff.max_hours_per_week = staff.max_hours_per_week or 20
+            staff.is_available = True if staff.is_available is None else staff.is_available
+        db.commit()
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 def startup_seed_database():
     _seed_database_if_empty()
+    _ensure_required_staff()
 
 
 @app.post("/api/admin/seed-demo")
 def seed_demo_data():
     _seed_database_if_empty()
+    _ensure_required_staff()
     db = SessionLocal()
     try:
         return {
