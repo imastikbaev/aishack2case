@@ -103,7 +103,7 @@ def _mock_parse_message(message: str, sender: str) -> dict:
     if class_pattern and any(kw in msg_lower for kw in attendance_keywords):
         clean_msg = re.sub(r'\d+[АаБбВвAaBb]', '', message)
         numbers = re.findall(r'\d+', clean_msg)
-        nums = [int(n) for n in numbers if 1 <= int(n) <= 50]
+        nums = [int(n) for n in numbers if 1 <= int(n) <= 500]
         class_name = class_pattern.group(1).upper()
         if len(nums) >= 2:
             iz_match = re.search(r'(\d+)\s+из\s+(\d+)', clean_msg)
